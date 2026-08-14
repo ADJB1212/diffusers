@@ -112,9 +112,9 @@ def _update_torch_safe_globals():
             safe_globals.extend([UInt4Tensor, Float8AQTTensorImpl])
 
     except (ImportError, ModuleNotFoundError) as e:
-        logger.warning(
-            "Unable to import `torchao` Tensor objects. This may affect loading checkpoints serialized with `torchao`"
-        )
+        # logger.warning(
+        #     "Unable to import `torchao` Tensor objects. This may affect loading checkpoints serialized with `torchao`"
+        # )
         logger.debug(e)
 
     finally:

@@ -33,10 +33,12 @@ if torch.distributed.is_available():
 from ..utils import (
     get_logger,
     is_flash_attn_3_available,
+    is_flash_attn_4_available,
     is_flash_attn_available,
     is_flash_attn_version,
     is_kernels_available,
     is_kernels_version,
+    is_sageattention3_available,
     is_sageattention_available,
     is_sageattention_version,
     is_torch_npu_available,
@@ -64,7 +66,9 @@ logger = get_logger(__name__)  # pylint: disable=invalid-name
 
 _CAN_USE_FLASH_ATTN = is_flash_attn_available() and is_flash_attn_version(">=", _REQUIRED_FLASH_VERSION)
 _CAN_USE_FLASH_ATTN_3 = is_flash_attn_3_available()
+_CAN_USE_FLASH_ATTN_4 = is_flash_attn_4_available()
 _CAN_USE_SAGE_ATTN = is_sageattention_available() and is_sageattention_version(">=", _REQUIRED_SAGE_VERSION)
+_CAN_USE_SAGE_ATTN_3 = is_sageattention3_available()
 _CAN_USE_FLEX_ATTN = is_torch_version(">=", _REQUIRED_FLEX_VERSION)
 _CAN_USE_NPU_ATTN = is_torch_npu_available()
 _CAN_USE_XLA_ATTN = is_torch_xla_available() and is_torch_xla_version(">=", _REQUIRED_XLA_VERSION)
@@ -104,6 +108,17 @@ else:
     flash_attn_3_func = None
     flash_attn_3_varlen_func = None
 
+if _CAN_USE_FLASH_ATTN_4:
+    try:
+        from flash_attn.cute import flash_attn_func as flash_attn_4_func
+    except (ImportError, OSError, RuntimeError) as e:
+        logger.warning(f"flash_attn_4 failed to import: {e}. Falling back to native attention.")
+        _CAN_USE_FLASH_ATTN_4 = False
+        flash_attn_4_func = None
+else:
+    flash_attn_4_func = None
+
+
 if _CAN_USE_SAGE_ATTN:
     try:
         from sageattention import (
@@ -130,6 +145,16 @@ else:
     sageattn_qk_int8_pv_fp8_cuda = None
     sageattn_qk_int8_pv_fp8_cuda_sm90 = None
     sageattn_varlen = None
+
+if _CAN_USE_SAGE_ATTN_3:
+    try:
+        from sageattn3 import sageattn3_blackwell
+    except (ImportError, OSError, RuntimeError) as e:
+        logger.warning(f"sageattn3 failed to import: {e}. Falling back to native attention.")
+        _CAN_USE_SAGE_ATTN_3 = False
+        sageattn3_blackwell = None
+else:
+    sageattn3_blackwell = None
 
 
 if _CAN_USE_FLEX_ATTN:
@@ -216,6 +241,7 @@ class AttentionBackendName(str, Enum):
     FLASH_VARLEN = "flash_varlen"
     FLASH_VARLEN_HUB = "flash_varlen_hub"
     FLASH_4_HUB = "flash_4_hub"
+    _FLASH_4 = "_flash_4"
     _FLASH_3 = "_flash_3"
     _FLASH_VARLEN_3 = "_flash_varlen_3"
     _FLASH_3_HUB = "_flash_3_hub"
@@ -242,6 +268,7 @@ class AttentionBackendName(str, Enum):
     _SAGE_QK_INT8_PV_FP8_CUDA_SM90 = "_sage_qk_int8_pv_fp8_cuda_sm90"
     _SAGE_QK_INT8_PV_FP16_CUDA = "_sage_qk_int8_pv_fp16_cuda"
     _SAGE_QK_INT8_PV_FP16_TRITON = "_sage_qk_int8_pv_fp16_triton"
+    SAGE3 = "sage3"
     # TODO: let's not add support for Sparge Attention now because it requires tuning per model
     # We can look into supporting something "autotune"-ing in the future
     # SPARGE = "sparge"
@@ -523,6 +550,9 @@ def _check_attention_backend_requirements(backend: AttentionBackendName) -> None
             raise RuntimeError(
                 f"Flash Attention 3 backend '{backend.value}' is not usable because of missing package or the version is too old. Please build FA3 beta release from source."
             )
+    elif backend == AttentionBackendName._FLASH_4:
+        if not _CAN_USE_FLASH_ATTN_4:
+            raise RuntimeError(f"Flash Attention 4 backend '{backend.value}' is not usable because flash_attn.cute module is not available. Please install flash-attn-4")
 
     elif backend in [
         AttentionBackendName.FLASH_HUB,
@@ -559,6 +589,10 @@ def _check_attention_backend_requirements(backend: AttentionBackendName) -> None
             raise RuntimeError(
                 f"Sage Attention backend '{backend.value}' is not usable because of missing package or the version is too old. Please install `sageattention>={_REQUIRED_SAGE_VERSION}`."
             )
+
+    elif backend == AttentionBackendName.SAGE3:
+        if not _CAN_USE_SAGE_ATTN_3:
+            raise RuntimeError(f"Sage Attention 3 backend '{backend.value}' is not usable because sageattn3 module is not available. Please install sageattn3")
 
     elif backend == AttentionBackendName.FLEX:
         if not _CAN_USE_FLEX_ATTN:
@@ -1831,6 +1865,39 @@ def _sage_attention_forward_op(
 
     return (out, lse) if return_lse else out
 
+def _sage_attention_3_forward_op(
+    ctx: torch.autograd.function.FunctionCtx,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attn_mask: torch.Tensor | None = None,
+    dropout_p: float = 0.0,
+    is_causal: bool = False,
+    scale: float | None = None,
+    enable_gqa: bool = False,
+    return_lse: bool = False,
+    _save_ctx: bool = True,
+    _parallel_config: "ParallelConfig" | None = None,
+):
+    if attn_mask is not None:
+        raise ValueError("`attn_mask` is not yet supported for Sage attention 3.")
+    if dropout_p > 0.0:
+        raise ValueError("`dropout_p` is not yet supported for Sage attention 3.")
+    if enable_gqa:
+        raise ValueError("`enable_gqa` is not yet supported for Sage attention 3.")
+
+    query_t = query.transpose(1, 2)
+    key_t = key.transpose(1, 2)
+    value_t = value.transpose(1, 2)
+    out = sageattn3_blackwell(q=query_t, k=key_t, v=value_t, is_causal=is_causal)
+    out = out.transpose(1, 2)
+    lse = None
+    if return_lse:
+        out, lse, *_ = out
+        lse = lse.permute(0, 2, 1)
+
+    return (out, lse) if return_lse else out
+
 
 def _sage_attention_hub_forward_op(
     ctx: torch.autograd.function.FunctionCtx,
@@ -1878,6 +1945,7 @@ def _sage_attention_backward_op(
     *args,
 ):
     raise NotImplementedError("Backward pass is not implemented for Sage attention.")
+
 
 
 def _maybe_modify_attn_mask_npu(query: torch.Tensor, key: torch.Tensor, attn_mask: torch.Tensor | None = None):
@@ -3185,6 +3253,35 @@ def _flash_attention_3_hub(
 
     return out
 
+@_AttentionBackendRegistry.register(
+    AttentionBackendName._FLASH_4,
+    constraints=[_check_device, _check_qkv_dtype_bf16_or_fp16, _check_shape],
+    supports_context_parallel=False,
+)
+def _flash_attention_4(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attn_mask: torch.Tensor | None = None,
+    scale: float | None = None,
+    is_causal: bool = False,
+    return_lse: bool = False,
+    _parallel_config: "ParallelConfig" | None = None,
+) -> torch.Tensor:
+    if attn_mask is not None:
+        raise ValueError("`attn_mask` is not supported for flash-attn 4.")
+
+    out = flash_attn_4_func(
+        q=query,
+        k=key,
+        v=value,
+        softmax_scale=scale,
+        causal=is_causal,
+    )
+    if isinstance(out, tuple):
+        return (out[0], out[1]) if return_lse else out[0]
+    return out
+
 
 @_AttentionBackendRegistry.register(
     AttentionBackendName._FLASH_3_VARLEN_HUB,
@@ -4086,6 +4183,50 @@ def _sage_qk_int8_pv_fp16_triton_attention(
         sm_scale=scale,
         return_lse=return_lse,
     )
+
+@_AttentionBackendRegistry.register(
+    AttentionBackendName.SAGE3,
+    constraints=[_check_device_cuda, _check_qkv_dtype_bf16_or_fp16, _check_shape],
+    supports_context_parallel=True,
+)
+def _sage_attention_3(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attn_mask: torch.Tensor | None = None,
+    is_causal: bool = False,
+    scale: float | None = None,
+    return_lse: bool = False,
+    _parallel_config: "ParallelConfig" | None = None,
+) -> torch.Tensor:
+    if attn_mask is not None:
+        raise ValueError("`attn_mask` is not supported for sage attention 3")
+    lse = None
+    if _parallel_config is None:
+        query_t = query.transpose(1, 2)
+        key_t = key.transpose(1, 2)
+        value_t = value.transpose(1, 2)
+        out = sageattn3_blackwell(q=query_t, k=key_t, v=value_t, is_causal=is_causal)
+        out = out.transpose(1, 2)
+    else:
+        out = _templated_context_parallel_attention(
+            query,
+            key,
+            value,
+            None,
+            0.0,
+            is_causal,
+            scale,
+            False,
+            return_lse,
+            forward_op=_sage_attention_3_forward_op,
+            backward_op=_sage_attention_backward_op,
+            _parallel_config=_parallel_config,
+        )
+        if return_lse:
+            out, lse = out
+
+    return (out, lse) if return_lse else out
 
 
 @_AttentionBackendRegistry.register(

@@ -212,8 +212,24 @@ _better_profanity_available, _better_profanity_version = _is_package_available("
 _nltk_available, _nltk_version = _is_package_available("nltk")
 _cosmos_guardrail_available, _cosmos_guardrail_version = _is_package_available("cosmos_guardrail")
 _sageattention_available, _sageattention_version = _is_package_available("sageattention")
+_sageattention3_available = False
+try:
+    from sageattn3 import sageattn3_blackwell as _sage3_test
+
+    _sageattention3_available = True
+    del _sage3_test
+except (ImportError, ModuleNotFoundError):
+    pass
 _flash_attn_available, _flash_attn_version = _is_package_available("flash_attn")
 _flash_attn_3_available, _flash_attn_3_version = _is_package_available("flash_attn_3")
+_flash_attn_4_available = False
+try:
+    from flash_attn.cute import flash_attn_func as _fa4_test
+
+    _flash_attn_4_available = True
+    del _fa4_test
+except (ImportError, ModuleNotFoundError):
+    pass
 _kornia_available, _kornia_version = _is_package_available("kornia")
 _nvidia_modelopt_available, _nvidia_modelopt_version = _is_package_available("modelopt", get_dist_name=True)
 _auto_round_available, _auto_round_version = _is_package_available("auto_round")
@@ -405,6 +421,9 @@ def is_hpu_available():
 def is_sageattention_available():
     return _sageattention_available
 
+def is_sageattention3_available():
+    return _sageattention3_available
+
 
 def is_flash_attn_available():
     return _flash_attn_available
@@ -412,6 +431,9 @@ def is_flash_attn_available():
 
 def is_flash_attn_3_available():
     return _flash_attn_3_available
+
+def is_flash_attn_4_available():
+    return _flash_attn_4_available
 
 
 def is_kornia_available():
