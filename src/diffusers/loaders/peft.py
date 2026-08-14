@@ -358,13 +358,13 @@ class PeftAdapterMixin:
 
         if prefix is not None and not state_dict:
             model_class_name = self.__class__.__name__
-            logger.warning(
-                f"No LoRA keys associated to {model_class_name} found with the {prefix=}. "
-                "This is safe to ignore if LoRA state dict didn't originally have any "
-                f"{model_class_name} related params. You can also try specifying `prefix=None` "
-                "to resolve the warning. Otherwise, open an issue if you think it's unexpected: "
-                "https://github.com/huggingface/diffusers/issues/new"
-            )
+            # logger.warning(
+            #     f"No LoRA keys associated to {model_class_name} found with the {prefix=}. "
+            #     "This is safe to ignore if LoRA state dict didn't originally have any "
+            #     f"{model_class_name} related params. You can also try specifying `prefix=None` "
+            #     "to resolve the warning. Otherwise, open an issue if you think it's unexpected: "
+            #     "https://github.com/huggingface/diffusers/issues/new"
+            # )
 
     def save_lora_adapter(
         self,
