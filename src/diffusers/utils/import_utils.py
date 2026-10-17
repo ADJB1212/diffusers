@@ -222,6 +222,7 @@ try:
 except (ImportError, ModuleNotFoundError):
     pass
 _flash_attn_available, _flash_attn_version = _is_package_available("flash_attn")
+_flashinfer_available, _flashinfer_version = _is_package_available("flashinfer", get_dist_name=True)
 _flash_attn_3_available, _flash_attn_3_version = _is_package_available("flash_attn_3")
 _flash_attn_4_available = False
 try:
@@ -373,6 +374,10 @@ def is_imageio_available():
 
 def is_gguf_available():
     return _gguf_available
+
+
+def is_flashinfer_available():
+    return _flashinfer_available
 
 
 def is_flashpack_available():
